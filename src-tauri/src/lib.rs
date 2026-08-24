@@ -210,7 +210,9 @@ pub fn run() {
                 .path()
                 .app_data_dir()
                 .expect("no app data dir");
-            let core = Manager::new(data_dir)?;
+            // Manager spawns background tasks at construction, so build it
+            // inside Tauri's tokio runtime.
+            let core = tauri::async_runtime::block_on(async { Manager::new(data_dir) })?;
 
             // Forward core events to the webview.
             let mut rx = core.subscribe();

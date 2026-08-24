@@ -64,6 +64,9 @@ struct JobRecord {
 pub struct JobManager {
     jobs: Arc<Mutex<HashMap<String, JobRecord>>>,
     events: broadcast::Sender<JobInfo>,
+    /// Captured at construction so jobs can be spawned from non-async contexts
+    /// (e.g. synchronous UI command handlers).
+    rt: tokio::runtime::Handle,
 }
 
 /// Handle passed into job bodies for progress reporting and cancellation.
@@ -99,11 +102,13 @@ impl Default for JobManager {
 }
 
 impl JobManager {
+    /// Must be called from within a tokio runtime.
     pub fn new() -> Self {
         let (events, _) = broadcast::channel(256);
         Self {
             jobs: Arc::new(Mutex::new(HashMap::new())),
             events,
+            rt: tokio::runtime::Handle::current(),
         }
     }
 
@@ -179,7 +184,7 @@ impl JobManager {
         let jobs = self.jobs.clone();
         let events = self.events.clone();
 
-        tokio::spawn(async move {
+        self.rt.spawn(async move {
             set_state(&jobs, &events, &id, JobState::Running, None);
             let result = tokio::select! {
                 r = body(ctx) => r,

@@ -41,6 +41,7 @@ pub struct Manager {
     health_history: Mutex<HashMap<String, VecDeque<HealthReport>>>,
     health_tasks: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
     events: broadcast::Sender<CoreEvent>,
+    rt: tokio::runtime::Handle,
 }
 
 impl Manager {
@@ -64,13 +65,15 @@ impl Manager {
             health_history: Mutex::new(HashMap::new()),
             health_tasks: Mutex::new(HashMap::new()),
             events,
+            rt: tokio::runtime::Handle::current(),
         });
 
         // Forward job updates onto the main event bus.
         {
+            let rt = manager.rt.clone();
             let manager = manager.clone();
             let mut rx = manager.jobs.subscribe();
-            tokio::spawn(async move {
+            rt.spawn(async move {
                 while let Ok(job) = rx.recv().await {
                     let _ = manager.events.send(CoreEvent::Job(job));
                 }
@@ -439,7 +442,7 @@ impl Manager {
         let manager = self.clone();
         let host_id = host.id.clone();
         let interval = host.health_interval_secs.clamp(5, 24 * 3600);
-        let task = tokio::spawn(async move {
+        let task = self.rt.spawn(async move {
             let mut ticker = tokio::time::interval(Duration::from_secs(interval));
             ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {
