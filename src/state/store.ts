@@ -55,6 +55,7 @@ interface AppState {
 }
 
 let toastSeq = 1;
+let initStarted = false;
 
 function applyDom(settings: AppSettings) {
   const root = document.documentElement;
@@ -118,6 +119,9 @@ export const useApp = create<AppState>((set, get) => ({
   setHealth: (r) => set((s) => ({ healthByHost: { ...s.healthByHost, [r.hostId]: r } })),
 
   init: async () => {
+    // Guard against double-registration (React StrictMode remounts effects).
+    if (initStarted) return;
+    initStarted = true;
     try {
       const settings = await ipc.getSettings();
       applyDom(settings);
