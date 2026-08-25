@@ -1,0 +1,30 @@
+[package]
+name = "agentmux-ssh"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+ssh-core = { path = "../crates/ssh-core" }
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+tokio.workspace = true
+base64 = "0.22"
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+[features]
+# Enabled by the Tauri CLI for production builds; embeds the frontend and
+# serves it over the custom protocol instead of the dev server URL.
+custom-protocol = ["tauri/custom-protocol"]
+
+[lib]
+name = "agentmux_ssh_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
