@@ -27,6 +27,11 @@ cargo test -p ssh-core  # backend tests (in-process SSH server, no sshd needed)
 npm run tauri build   # produce deb/rpm/AppImage
 ```
 
+Building the binary directly with cargo? Debug builds load the Vite dev server
+(run `npm run dev` alongside); for a standalone binary use
+`cargo build --release -p agentmux-ssh --features custom-protocol`
+(the Tauri CLI passes that feature automatically).
+
 ## Tests
 
 `crates/ssh-core/tests` spins up an in-process SSH server (russh server side)
