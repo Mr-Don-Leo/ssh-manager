@@ -1,0 +1,531 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SSH Server Manager — Every server. One window.</title>
+<meta name="description" content="A desktop app for managing SSH servers — terminals, SFTP, port forwarding, and health monitoring for Linux, macOS, and Windows. Pure-Rust SSH stack, encrypted credential vault." />
+<link rel="icon" type="image/png" href="favicon.png" />
+<style>
+  /* Design tokens — mirrors the app's tokens.css (Apple skin, light + dark). */
+  :root {
+    --font-ui: -apple-system, "SF Pro Text", "Inter", "Segoe UI", system-ui, sans-serif;
+    --font-mono: "SF Mono", ui-monospace, "JetBrains Mono", Menlo, monospace;
+
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 18px;
+
+    --accent: #007aff;
+    --accent-contrast: #ffffff;
+    --accent-soft: rgba(0, 122, 255, 0.14);
+    --success: #34c759;
+    --warning: #ff9f0a;
+
+    --bg: #f5f5f7;
+    --bg-elevated: #ffffff;
+    --bg-nav: rgba(246, 246, 248, 0.82);
+    --bg-input: rgba(0, 0, 0, 0.045);
+    --bg-hover: rgba(0, 0, 0, 0.06);
+    --text: #1d1d1f;
+    --text-secondary: #6e6e73;
+    --text-tertiary: #a1a1a6;
+    --border: rgba(0, 0, 0, 0.09);
+
+    --shadow-card: 0 0 0 1px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(0, 0, 0, 0.06);
+    --shadow-modal: 0 0 0 1px rgba(0, 0, 0, 0.06), 0 24px 64px rgba(0, 0, 0, 0.22);
+
+    --terminal-bg: #ffffff;
+    --terminal-fg: #1d1d1f;
+
+    color-scheme: light;
+  }
+  [data-theme="dark"] {
+    --accent: #0a84ff;
+    --accent-soft: rgba(10, 132, 255, 0.2);
+    --success: #30d158;
+    --warning: #ffd60a;
+
+    --bg: #1c1c1e;
+    --bg-elevated: #2a2a2d;
+    --bg-nav: rgba(28, 28, 30, 0.78);
+    --bg-input: rgba(255, 255, 255, 0.065);
+    --bg-hover: rgba(255, 255, 255, 0.09);
+    --text: #f5f5f7;
+    --text-secondary: #98989f;
+    --text-tertiary: #636369;
+    --border: rgba(255, 255, 255, 0.1);
+
+    --shadow-card: 0 0 0 1px rgba(255, 255, 255, 0.04), 0 8px 24px rgba(0, 0, 0, 0.35);
+    --shadow-modal: 0 0 0 1px rgba(255, 255, 255, 0.07), 0 24px 64px rgba(0, 0, 0, 0.55);
+
+    --terminal-bg: #1c1c1e;
+    --terminal-fg: #f5f5f7;
+
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    font-family: var(--font-ui);
+    font-size: 14px;
+    line-height: 1.6;
+    background: var(--bg);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, pre { font-family: var(--font-mono); }
+
+  .wrap { max-width: 980px; margin: 0 auto; padding: 0 24px; }
+
+  /* Nav */
+  .nav {
+    position: sticky; top: 0; z-index: 10;
+    background: var(--bg-nav);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+    border-bottom: 1px solid var(--border);
+    user-select: none;
+  }
+  .nav-inner {
+    display: flex; align-items: center; gap: 20px;
+    height: 52px;
+  }
+  .nav-brand {
+    display: flex; align-items: center; gap: 9px;
+    font-weight: 600; font-size: 14.5px; letter-spacing: -0.2px;
+    color: var(--text) !important;
+  }
+  .nav-brand:hover { text-decoration: none; }
+  .nav-brand img { width: 22px; height: 22px; border-radius: 5px; }
+  .nav-links { display: flex; gap: 4px; margin-left: auto; align-items: center; }
+  .nav-links a {
+    color: var(--text-secondary); font-size: 13px; font-weight: 500;
+    padding: 5px 10px; border-radius: var(--radius-sm);
+    transition: background 120ms ease, color 120ms ease;
+  }
+  .nav-links a:hover { background: var(--bg-hover); color: var(--text); text-decoration: none; }
+  .theme-toggle {
+    border: 1px solid var(--border); background: var(--bg-input);
+    color: var(--text-secondary); border-radius: 999px;
+    width: 30px; height: 30px; cursor: pointer; font-size: 14px;
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: background 120ms ease;
+    padding: 0;
+  }
+  .theme-toggle:hover { background: var(--bg-hover); }
+
+  /* Buttons */
+  .btn {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 9px 18px; border-radius: var(--radius-sm);
+    font-family: var(--font-ui); font-size: 14px; font-weight: 500;
+    background: var(--bg-input); color: var(--text);
+    border: 1px solid var(--border); cursor: pointer;
+    transition: background 120ms ease, transform 100ms ease;
+    user-select: none;
+  }
+  .btn:hover { background: var(--bg-hover); text-decoration: none; }
+  .btn:active { transform: scale(0.98); }
+  .btn-primary {
+    background: var(--accent); border-color: transparent;
+    color: var(--accent-contrast);
+  }
+  .btn-primary:hover { background: var(--accent); filter: brightness(1.08); }
+
+  .pill {
+    display: inline-block; padding: 3px 11px; border-radius: 999px;
+    font-size: 11px; font-weight: 600;
+    background: var(--accent-soft); color: var(--accent);
+  }
+
+  /* Hero */
+  .hero { padding: 84px 0 40px; text-align: center; }
+  .hero img.mark { width: 76px; height: 76px; border-radius: 17px; box-shadow: var(--shadow-card); }
+  .hero h1 {
+    margin: 26px 0 12px; font-size: 42px; font-weight: 700;
+    letter-spacing: -0.4px; line-height: 1.15;
+  }
+  .hero .tagline {
+    margin: 0 auto; max-width: 620px;
+    font-size: 16.5px; color: var(--text-secondary);
+  }
+  .hero .cta { margin-top: 30px; display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .hero .platforms { margin-top: 16px; font-size: 12.5px; color: var(--text-tertiary); }
+
+  /* Terminal mock */
+  .terminal {
+    margin: 44px auto 0; max-width: 720px; text-align: left;
+    background: var(--terminal-bg); border: 1px solid var(--border);
+    border-radius: var(--radius-md); box-shadow: var(--shadow-modal);
+    overflow: hidden;
+  }
+  .terminal-bar {
+    display: flex; align-items: center; gap: 6px;
+    padding: 10px 14px; border-bottom: 1px solid var(--border);
+    user-select: none;
+  }
+  .terminal-bar .dot { width: 11px; height: 11px; border-radius: 50%; background: var(--bg-hover); }
+  .terminal-bar .dot:nth-child(1) { background: #ff5f57; }
+  .terminal-bar .dot:nth-child(2) { background: #febc2e; }
+  .terminal-bar .dot:nth-child(3) { background: #28c840; }
+  .terminal-bar .title {
+    margin: 0 auto; font-size: 12px; color: var(--text-secondary); font-weight: 500;
+    transform: translateX(-24px);
+  }
+  .terminal pre {
+    margin: 0; padding: 16px 18px; font-size: 12.5px; line-height: 1.75;
+    color: var(--terminal-fg); overflow-x: auto;
+  }
+  .t-ok { color: var(--success); }
+  .t-dim { color: var(--text-secondary); }
+  .t-accent { color: var(--accent); }
+  .cursor {
+    display: inline-block; width: 7px; height: 14px; vertical-align: text-bottom;
+    background: var(--accent); animation: blink 1.1s steps(1) infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* Sections */
+  section { padding: 56px 0; }
+  .section-head { text-align: center; margin-bottom: 36px; }
+  .section-head h2 { margin: 12px 0 8px; font-size: 26px; font-weight: 700; letter-spacing: -0.4px; }
+  .section-head p { margin: 0 auto; max-width: 560px; color: var(--text-secondary); }
+
+  /* Cards */
+  .grid { display: grid; gap: 16px; }
+  .grid-3 { grid-template-columns: repeat(3, 1fr); }
+  @media (max-width: 760px) { .grid-3 { grid-template-columns: 1fr; } .hero h1 { font-size: 32px; } }
+  .card {
+    background: var(--bg-elevated); border: 1px solid var(--border);
+    border-radius: var(--radius-lg); box-shadow: var(--shadow-card);
+    padding: 22px;
+    transition: transform 120ms ease, box-shadow 120ms ease;
+  }
+  .card:hover { transform: translateY(-2px); box-shadow: var(--shadow-modal); }
+  .card h3 { margin: 0 0 6px; font-size: 15px; font-weight: 600; letter-spacing: -0.2px; }
+  .card p { margin: 0; font-size: 13px; color: var(--text-secondary); }
+
+  /* Download cards */
+  .dl-card { text-align: center; display: flex; flex-direction: column; }
+  .dl-card .os-glyph { font-size: 30px; line-height: 1; margin-bottom: 12px; }
+  .dl-card .formats { margin: 10px 0 18px; display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; }
+  .dl-card .formats span {
+    padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 600;
+    background: var(--bg-input); color: var(--text-secondary); font-family: var(--font-mono);
+  }
+  .dl-card .btn { margin-top: auto; justify-content: center; }
+  .dl-note { margin-top: 22px; text-align: center; font-size: 12.5px; color: var(--text-tertiary); }
+
+  /* Features */
+  .feature-num {
+    font-family: var(--font-mono); font-size: 11.5px; font-weight: 600;
+    color: var(--accent); margin-bottom: 8px;
+  }
+
+  /* Skins */
+  .skin-card { padding: 0; overflow: hidden; }
+  .skin-preview { height: 118px; display: flex; align-items: center; justify-content: center; gap: 8px; }
+  .skin-preview .chip { height: 12px; border-radius: 999px; }
+  .skin-card .skin-meta { padding: 16px 20px 20px; }
+  .skin-apple .skin-preview { background: linear-gradient(180deg, #f5f5f7 50%, #1c1c1e 50%); }
+  .skin-cyber .skin-preview {
+    background:
+      linear-gradient(rgba(0, 240, 255, 0.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0, 240, 255, 0.05) 1px, transparent 1px),
+      #0b0714;
+    background-size: 24px 24px, 24px 24px, auto;
+  }
+  .skin-xp .skin-preview { background: linear-gradient(180deg, #3d95ff 0%, #2456c9 38%, #ece9d8 38%); }
+
+  /* Code block */
+  .codeblock {
+    background: var(--bg-elevated); border: 1px solid var(--border);
+    border-radius: var(--radius-md); box-shadow: var(--shadow-card);
+    padding: 18px 20px; overflow-x: auto;
+  }
+  .codeblock pre { margin: 0; font-size: 12.5px; line-height: 1.8; }
+  .codeblock .c { color: var(--text-tertiary); }
+
+  /* Footer */
+  footer {
+    border-top: 1px solid var(--border);
+    padding: 40px 0 48px; margin-top: 24px;
+    color: var(--text-secondary); font-size: 13px;
+  }
+  .footer-cols { display: flex; gap: 64px; flex-wrap: wrap; }
+  .footer-cols h4 {
+    margin: 0 0 10px; font-size: 11.5px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-tertiary);
+  }
+  .footer-cols ul { margin: 0; padding: 0; list-style: none; }
+  .footer-cols li { margin-bottom: 6px; }
+  .footer-cols a { color: var(--text-secondary); }
+  .footer-cols a:hover { color: var(--text); }
+  .copyright { margin-top: 36px; font-size: 12px; color: var(--text-tertiary); }
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="wrap nav-inner">
+    <a class="nav-brand" href="#">
+      <img src="icon.png" alt="" />
+      SSH Server Manager
+    </a>
+    <div class="nav-links">
+      <a href="#features">Features</a>
+      <a href="#download">Download</a>
+      <a href="#skins">Skins</a>
+      <a href="#development">Development</a>
+      <a href="https://github.com/Mr-Don-Leo/ssh-server-manager">GitHub</a>
+      <button class="theme-toggle" id="themeToggle" aria-label="Toggle dark mode" title="Toggle dark mode">◐</button>
+    </div>
+  </div>
+</nav>
+
+<header class="hero wrap">
+  <img class="mark" src="icon.png" alt="SSH Server Manager icon" width="76" height="76" />
+  <h1>Every server. One window.</h1>
+  <p class="tagline">
+    A desktop app for managing SSH servers — tabbed terminals, SFTP file browsing,
+    port forwarding, and live health monitoring. Credentials stay in an encrypted
+    vault, and host keys are pinned on first use.
+  </p>
+  <div class="cta">
+    <a class="btn btn-primary" href="#download">Download</a>
+    <a class="btn" href="https://github.com/Mr-Don-Leo/ssh-server-manager">View on GitHub</a>
+  </div>
+  <p class="platforms">Linux · macOS · Windows &nbsp;—&nbsp; free and open source, MIT licensed</p>
+
+  <div class="terminal">
+    <div class="terminal-bar">
+      <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+      <span class="title">prod-web-01 — ssh</span>
+    </div>
+    <pre><span class="t-dim">$</span> <span class="t-accent">connect</span> prod-web-01
+<span class="t-ok">✓</span> host key verified <span class="t-dim">(SHA256:mVL…pinned)</span>
+<span class="t-ok">✓</span> authenticated with ssh-agent
+<span class="t-ok">✓</span> session ready <span class="t-dim">— 3 tunnels active, health: 12 ms</span>
+
+<span class="t-dim">maxus@prod-web-01:~$</span> <span class="cursor"></span></pre>
+  </div>
+</header>
+
+<section id="download">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="pill">Desktop app</span>
+      <h2>Download</h2>
+      <p>Native installers for every desktop platform, built from source by GitHub Actions on each tagged release.</p>
+    </div>
+    <div class="grid grid-3">
+      <div class="card dl-card">
+        <div class="os-glyph"></div>
+        <h3>macOS</h3>
+        <p>Apple silicon and Intel disk images.</p>
+        <div class="formats"><span>.dmg</span><span>.app</span></div>
+        <a class="btn btn-primary" href="https://github.com/Mr-Don-Leo/ssh-server-manager/releases/latest">Download for macOS</a>
+      </div>
+      <div class="card dl-card">
+        <div class="os-glyph">🐧</div>
+        <h3>Linux</h3>
+        <p>Packages for Debian, Fedora, and everything else.</p>
+        <div class="formats"><span>.deb</span><span>.rpm</span><span>.AppImage</span></div>
+        <a class="btn btn-primary" href="https://github.com/Mr-Don-Leo/ssh-server-manager/releases/latest">Download for Linux</a>
+      </div>
+      <div class="card dl-card">
+        <div class="os-glyph">🪟</div>
+        <h3>Windows</h3>
+        <p>MSI and NSIS installers for 64-bit Windows.</p>
+        <div class="formats"><span>.msi</span><span>.exe</span></div>
+        <a class="btn btn-primary" href="https://github.com/Mr-Don-Leo/ssh-server-manager/releases/latest">Download for Windows</a>
+      </div>
+    </div>
+    <p class="dl-note">
+      Builds are currently unsigned — macOS and Windows may warn on first launch.
+      You can always <a href="#development">build from source</a>.
+    </p>
+  </div>
+</section>
+
+<section id="features">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="pill">Capabilities</span>
+      <h2>Features</h2>
+      <p>The SSH stack is pure Rust (russh + russh-sftp) — no system OpenSSH or libssh dependency.</p>
+    </div>
+    <div class="grid grid-3">
+      <div class="card">
+        <div class="feature-num">01</div>
+        <h3>Hosts &amp; encrypted vault</h3>
+        <p>Store servers with per-host auth: SSH agent, private key, or password. Secrets live in an XChaCha20-Poly1305 vault with an Argon2-derived key.</p>
+      </div>
+      <div class="card">
+        <div class="feature-num">02</div>
+        <h3>Host key verification</h3>
+        <p>Fingerprints are confirmed on first connection, then pinned. A changed server key is refused with a warning until you explicitly approve it.</p>
+      </div>
+      <div class="card">
+        <div class="feature-num">03</div>
+        <h3>Tabbed terminals</h3>
+        <p>xterm.js terminals over real SSH PTY channels, with theme-matched colors and full resize support.</p>
+      </div>
+      <div class="card">
+        <div class="feature-num">04</div>
+        <h3>SFTP file browser</h3>
+        <p>Navigate remote filesystems, upload and download with progress, rename, recursively delete, and create folders.</p>
+      </div>
+      <div class="card">
+        <div class="feature-num">05</div>
+        <h3>Port forwarding</h3>
+        <p>Local (-L), remote (-R), and dynamic SOCKS5 (-D) tunnels, managed per host with live status.</p>
+      </div>
+      <div class="card">
+        <div class="feature-num">06</div>
+        <h3>Health monitoring</h3>
+        <p>Reachability and latency checks, plus uptime, load, memory, and disk metrics with sparklines. Optional per-host auto-monitoring.</p>
+      </div>
+      <div class="card">
+        <div class="feature-num">07</div>
+        <h3>Background jobs</h3>
+        <p>Transfers and long-running tasks run as jobs with live progress and cancellation.</p>
+      </div>
+      <div class="card">
+        <div class="feature-num">08</div>
+        <h3>Pure-Rust SSH core</h3>
+        <p>Built on russh in a standalone crate, exercised end-to-end by an in-process SSH server test suite — no sshd required.</p>
+      </div>
+      <div class="card">
+        <div class="feature-num">09</div>
+        <h3>Custom UI, three skins</h3>
+        <p>Apple-HIG styling driven entirely by design tokens. Every widget — dropdowns, checkboxes, toggles, segmented controls — is custom, never native.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="skins">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="pill">Appearance</span>
+      <h2>Three skins, two modes</h2>
+      <p>Skins redefine design tokens only — colors, radii, fonts — so every component adapts automatically.</p>
+    </div>
+    <div class="grid grid-3">
+      <div class="card skin-card skin-apple">
+        <div class="skin-preview">
+          <span class="chip" style="width:56px;background:#007aff"></span>
+          <span class="chip" style="width:34px;background:#0a84ff"></span>
+        </div>
+        <div class="skin-meta">
+          <h3>Apple</h3>
+          <p>Restrained HIG look with hairline borders and soft shadows. Light and dark, system-following.</p>
+        </div>
+      </div>
+      <div class="card skin-card skin-cyber">
+        <div class="skin-preview">
+          <span class="chip" style="width:56px;background:#00f0ff;box-shadow:0 0 16px rgba(0,240,255,.6)"></span>
+          <span class="chip" style="width:34px;background:#ff2ec4;box-shadow:0 0 16px rgba(255,46,196,.5)"></span>
+        </div>
+        <div class="skin-meta">
+          <h3>Cyberpunk</h3>
+          <p>Neon cyan on deep purple-black, glow shadows, and a faint grid overlay. Always dark.</p>
+        </div>
+      </div>
+      <div class="card skin-card skin-xp">
+        <div class="skin-preview">
+          <span class="chip" style="width:56px;background:linear-gradient(180deg,#fdfdfb,#f0eee1);border:1px solid #7f9db9"></span>
+          <span class="chip" style="width:34px;background:linear-gradient(180deg,#3d95ff,#2456c9)"></span>
+        </div>
+        <div class="skin-meta">
+          <h3>XP</h3>
+          <p>Luna nostalgia: beige chrome, blue gradient title bars, Tahoma, and beveled buttons. Always light.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="development">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="pill">Open source</span>
+      <h2>Build from source</h2>
+      <p>Tauri 2 + React frontend, Rust backend. Requires Rust and Node 18+ (WebKitGTK 4.1 dev packages on Linux).</p>
+    </div>
+    <div class="codeblock">
+      <pre><span class="c"># clone and run</span>
+git clone https://github.com/Mr-Don-Leo/ssh-server-manager.git
+cd ssh-server-manager
+npm install
+npm run tauri dev
+
+<span class="c"># tests</span>
+npm test                <span class="c"># frontend (vitest)</span>
+cargo test -p ssh-core  <span class="c"># backend (in-process SSH server, no sshd needed)</span>
+
+<span class="c"># package installers for the current platform</span>
+npm run tauri build</pre>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="footer-cols">
+      <div>
+        <h4>Project</h4>
+        <ul>
+          <li><a href="https://github.com/Mr-Don-Leo/ssh-server-manager">Repository</a></li>
+          <li><a href="https://github.com/Mr-Don-Leo/ssh-server-manager/releases">Releases</a></li>
+          <li><a href="https://github.com/Mr-Don-Leo/ssh-server-manager/issues">Issues</a></li>
+          <li><a href="https://github.com/Mr-Don-Leo/ssh-server-manager/blob/main/LICENSE">MIT License</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Contributors</h4>
+        <ul>
+          <li><a href="https://github.com/Mr-Don-Leo">Mr-Don-Leo</a> — maintainer</li>
+          <li><a href="https://github.com/SteveWithDiscord">SteveWithDiscord</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Built with</h4>
+        <ul>
+          <li><a href="https://tauri.app">Tauri 2</a> + <a href="https://react.dev">React</a></li>
+          <li><a href="https://crates.io/crates/russh">russh</a> + russh-sftp</li>
+          <li><a href="https://xtermjs.org">xterm.js</a></li>
+        </ul>
+      </div>
+    </div>
+    <p class="copyright">© 2026 SSH Server Manager contributors. MIT licensed.</p>
+  </div>
+</footer>
+
+<script>
+  (function () {
+    var stored = localStorage.getItem("theme");
+    var mql = window.matchMedia("(prefers-color-scheme: dark)");
+    function apply(mode) {
+      document.documentElement.setAttribute("data-theme", mode);
+    }
+    apply(stored || (mql.matches ? "dark" : "light"));
+    mql.addEventListener("change", function (e) {
+      if (!localStorage.getItem("theme")) apply(e.matches ? "dark" : "light");
+    });
+    document.getElementById("themeToggle").addEventListener("click", function () {
+      var next = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
+      localStorage.setItem("theme", next);
+      apply(next);
+    });
+  })();
+</script>
+
+</body>
+</html>
