@@ -2,7 +2,7 @@
 
 A desktop app (Tauri 2 + React) for managing SSH servers, for Linux, macOS, and Windows.
 
-**Website:** https://mr-don-leo.github.io/ssh-server-manager/
+**Website:** https://mr-don-leo.github.io/ssh-manager/
 
 ## Features
 
