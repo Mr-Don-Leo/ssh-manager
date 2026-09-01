@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use ssh_core::{
-    AppSettings, CoreEvent, FileEntry, ForwardInfo, ForwardSpec, HealthReport, HostEntry,
-    JobInfo, Manager, SessionInfo,
+    AppSettings, ConnectOutcome, CoreEvent, FileEntry, ForwardInfo, ForwardSpec, HealthReport,
+    HostEntry, JobInfo, KnownHostKey, Manager, SessionInfo,
 };
 use tauri::{Emitter, Manager as TauriManager, State};
 
@@ -44,8 +44,24 @@ fn delete_secret(core: State<Core>, host_id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn connect_host(core: State<'_, Core>, host_id: String) -> Result<SessionInfo, String> {
-    core.connect_host(&host_id).await.map_err(err)
+async fn connect_host(
+    core: State<'_, Core>,
+    host_id: String,
+    accept_fingerprint: Option<String>,
+) -> Result<ConnectOutcome, String> {
+    core.connect_host(&host_id, accept_fingerprint)
+        .await
+        .map_err(err)
+}
+
+#[tauri::command]
+fn list_known_hosts(core: State<Core>) -> Vec<KnownHostKey> {
+    core.list_known_hosts()
+}
+
+#[tauri::command]
+fn forget_known_host(core: State<Core>, host: String, port: u16) -> Result<(), String> {
+    core.forget_known_host(&host, port).map_err(err)
 }
 
 #[tauri::command]
@@ -244,6 +260,8 @@ pub fn run() {
             has_secret,
             delete_secret,
             connect_host,
+            list_known_hosts,
+            forget_known_host,
             disconnect_session,
             list_sessions,
             open_terminal,

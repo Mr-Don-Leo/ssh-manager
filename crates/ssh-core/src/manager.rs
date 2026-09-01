@@ -12,8 +12,9 @@ use tokio::sync::Mutex as AsyncMutex;
 use crate::forward::ActiveForward;
 use crate::hosts::HostStore;
 use crate::jobs::JobManager;
+use crate::known_hosts::{KnownHostKey, KnownHostsStore};
 use crate::model::*;
-use crate::session::SshSession;
+use crate::session::{HostKeyVerifier, SshSession};
 use crate::terminal::{TermEvent, Terminal};
 use crate::vault::Vault;
 use crate::{health, sftp, CoreError, Result};
@@ -32,6 +33,7 @@ pub enum CoreEvent {
 pub struct Manager {
     store: HostStore,
     vault: Vault,
+    known_hosts: KnownHostsStore,
     pub jobs: JobManager,
     sessions: Mutex<HashMap<String, Arc<SshSession>>>,
     sftp_cache: AsyncMutex<HashMap<String, Arc<SftpSession>>>,
@@ -47,15 +49,21 @@ pub struct Manager {
 impl Manager {
     pub fn new(data_dir: PathBuf) -> Result<Arc<Self>> {
         let store = HostStore::open(data_dir.clone())?;
-        let vault = Vault::open(data_dir)?;
-        Self::with_parts(store, vault)
+        let vault = Vault::open(data_dir.clone())?;
+        let known_hosts = KnownHostsStore::open(data_dir)?;
+        Self::with_parts(store, vault, known_hosts)
     }
 
-    pub fn with_parts(store: HostStore, vault: Vault) -> Result<Arc<Self>> {
+    pub fn with_parts(
+        store: HostStore,
+        vault: Vault,
+        known_hosts: KnownHostsStore,
+    ) -> Result<Arc<Self>> {
         let (events, _) = broadcast::channel(1024);
         let manager = Arc::new(Self {
             store,
             vault,
+            known_hosts,
             jobs: JobManager::new(),
             sessions: Mutex::new(HashMap::new()),
             sftp_cache: AsyncMutex::new(HashMap::new()),
@@ -129,12 +137,71 @@ impl Manager {
         self.vault.delete(host_id)
     }
 
+    // ---- Known host keys ----
+
+    pub fn list_known_hosts(&self) -> Vec<KnownHostKey> {
+        self.known_hosts.list()
+    }
+
+    pub fn forget_known_host(&self, host: &str, port: u16) -> Result<()> {
+        self.known_hosts.forget(host, port)
+    }
+
     // ---- Sessions ----
 
-    pub async fn connect_host(self: &Arc<Self>, host_id: &str) -> Result<SessionInfo> {
+    /// Connects to a saved host. On the first contact (or when the server's
+    /// key no longer matches the pinned one) this returns a `HostKeyPrompt`
+    /// instead of connecting; retry with `accept_fingerprint` set to the
+    /// prompted fingerprint to trust the key and pin it.
+    pub async fn connect_host(
+        self: &Arc<Self>,
+        host_id: &str,
+        accept_fingerprint: Option<String>,
+    ) -> Result<ConnectOutcome> {
         let host = self.store.get(host_id)?;
         let secret = self.vault.get(host_id)?;
-        let session = Arc::new(SshSession::connect(&host, secret).await?);
+        let verifier = HostKeyVerifier::new(
+            self.known_hosts.get(&host.host, host.port),
+            accept_fingerprint,
+        );
+        let session = match SshSession::connect(&host, secret, Some(verifier.clone())).await {
+            Ok(session) => Arc::new(session),
+            Err(
+                CoreError::HostKeyUnknown {
+                    key_type,
+                    fingerprint,
+                    ..
+                }
+                | CoreError::HostKeyMismatch {
+                    key_type,
+                    fingerprint,
+                    ..
+                },
+            ) => {
+                return Ok(ConnectOutcome::HostKeyPrompt {
+                    prompt: HostKeyPrompt {
+                        host_id: host.id.clone(),
+                        host: host.host.clone(),
+                        port: host.port,
+                        key_type,
+                        fingerprint,
+                        known_fingerprint: verifier.expected.map(|k| k.fingerprint),
+                    },
+                });
+            }
+            Err(e) => return Err(e),
+        };
+        if verifier.accepted_new() {
+            if let Some(observed) = verifier.observed() {
+                self.known_hosts.pin(
+                    &host.host,
+                    host.port,
+                    &observed.key_type,
+                    &observed.key_base64,
+                    &observed.fingerprint,
+                )?;
+            }
+        }
         let info = session.info.clone();
         self.sessions
             .lock()
@@ -156,7 +223,7 @@ impl Manager {
                 }
             }
         });
-        Ok(info)
+        Ok(ConnectOutcome::Connected { session: info })
     }
 
     fn get_session_opt(&self, session_id: &str) -> Option<Arc<SshSession>> {

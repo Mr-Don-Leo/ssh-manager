@@ -10,11 +10,26 @@ permissions:
 
 jobs:
   build-and-release:
-    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+            args: ""
+          - platform: macos-latest
+            args: "--target aarch64-apple-darwin"
+            rust-targets: aarch64-apple-darwin
+          - platform: macos-latest
+            args: "--target x86_64-apple-darwin"
+            rust-targets: x86_64-apple-darwin
+          - platform: windows-latest
+            args: ""
+    runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Linux dependencies
+        if: startsWith(matrix.platform, 'ubuntu')
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -37,10 +52,13 @@ jobs:
           cache: npm
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-targets }}
 
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
+          key: ${{ matrix.platform }}-${{ matrix.rust-targets }}
 
       - name: Install frontend dependencies
         run: npm ci
@@ -53,12 +71,21 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: "SSH Server Manager ${{ github.ref_name }}"
           releaseBody: |
-            Linux desktop app for managing SSH servers — hosts with an encrypted
+            Desktop app for managing SSH servers — hosts with an encrypted
             credential vault, tabbed terminals, SFTP file browser, port
             forwarding (local/remote/SOCKS5), health monitoring, and background
             jobs. Pure-Rust SSH stack (russh), no system OpenSSH required.
 
-            **Downloads:** `.AppImage` (portable, most distros), `.deb`
-            (Debian/Ubuntu), `.rpm` (Fedora/openSUSE).
+            New in this release: **host key verification** — server keys are
+            confirmed by fingerprint on first connection and pinned; changed
+            keys are refused with a warning until explicitly approved. Pinned
+            keys are managed in Settings. Plus first **macOS** (Apple Silicon +
+            Intel) and **Windows** builds.
+
+            **Downloads:**
+            - Linux: `.AppImage` (portable), `.deb` (Debian/Ubuntu), `.rpm` (Fedora/openSUSE)
+            - macOS: `.dmg` (`aarch64` = Apple Silicon, `x64` = Intel) — unsigned; right-click → Open on first launch
+            - Windows: `.msi` or `-setup.exe` (NSIS) — unsigned; accept the SmartScreen prompt
           releaseDraft: false
           prerelease: false
+          args: ${{ matrix.args }}

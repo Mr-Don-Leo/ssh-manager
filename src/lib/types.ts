@@ -21,6 +21,29 @@ export interface SessionInfo {
   connectedAt: number;
 }
 
+export interface HostKeyPrompt {
+  hostId: string;
+  host: string;
+  port: number;
+  keyType: string;
+  fingerprint: string;
+  /** Set when the server's key differs from the pinned one (key changed). */
+  knownFingerprint?: string | null;
+}
+
+export type ConnectOutcome =
+  | { status: "connected"; session: SessionInfo }
+  | { status: "hostKeyPrompt"; prompt: HostKeyPrompt };
+
+export interface KnownHostKey {
+  host: string;
+  port: number;
+  keyType: string;
+  keyBase64: string;
+  fingerprint: string;
+  addedAt: number;
+}
+
 export interface FileEntry {
   name: string;
   path: string;

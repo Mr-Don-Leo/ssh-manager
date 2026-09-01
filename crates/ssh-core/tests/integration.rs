@@ -9,8 +9,9 @@ use std::time::Duration;
 
 use ssh_core::hosts::HostStore;
 use ssh_core::jobs::JobManager;
+use ssh_core::known_hosts::{KnownHostKey, KnownHostsStore};
 use ssh_core::model::*;
-use ssh_core::session::SshSession;
+use ssh_core::session::{HostKeyVerifier, SshSession};
 use ssh_core::terminal::{TermEvent, Terminal};
 use ssh_core::vault::Vault;
 use ssh_core::{health, sftp, CoreEvent, CoreError, Manager};
@@ -37,9 +38,29 @@ fn host_for(server: &TestServer) -> HostEntry {
 }
 
 async fn connect(server: &TestServer) -> SshSession {
-    SshSession::connect(&host_for(server), Some(PASSWORD.into()))
+    SshSession::connect(&host_for(server), Some(PASSWORD.into()), None)
         .await
         .expect("connect + auth should succeed")
+}
+
+/// Connects through the manager, trusting the host key on first use the way
+/// the UI does (prompt -> retry with the prompted fingerprint).
+async fn manager_connect(manager: &Arc<Manager>, host_id: &str) -> SessionInfo {
+    match manager.connect_host(host_id, None).await.unwrap() {
+        ConnectOutcome::Connected { session } => session,
+        ConnectOutcome::HostKeyPrompt { prompt } => {
+            match manager
+                .connect_host(host_id, Some(prompt.fingerprint))
+                .await
+                .unwrap()
+            {
+                ConnectOutcome::Connected { session } => session,
+                ConnectOutcome::HostKeyPrompt { .. } => {
+                    panic!("still prompted after accepting the host key")
+                }
+            }
+        }
+    }
 }
 
 // ---------------- networking ----------------
@@ -62,7 +83,7 @@ async fn networking_rejects_bad_password() {
     let server = TestServer::start().await;
     let mut host = host_for(&server);
     host.id = "bad".into();
-    let Err(err) = SshSession::connect(&host, Some("wrong-password".into())).await else {
+    let Err(err) = SshSession::connect(&host, Some("wrong-password".into()), None).await else {
         panic!("wrong password must fail");
     };
     assert!(matches!(err, CoreError::AuthFailed(_)), "got: {err}");
@@ -71,7 +92,7 @@ async fn networking_rejects_bad_password() {
 #[tokio::test(flavor = "multi_thread")]
 async fn networking_missing_credential() {
     let server = TestServer::start().await;
-    let Err(err) = SshSession::connect(&host_for(&server), None).await else {
+    let Err(err) = SshSession::connect(&host_for(&server), None, None).await else {
         panic!("password auth without a secret must fail");
     };
     assert!(matches!(err, CoreError::MissingCredential));
@@ -85,8 +106,127 @@ async fn networking_unreachable_host() {
         port: 1, // almost certainly closed
         ..host_for(&TestServer::start().await)
     };
-    let result = SshSession::connect(&host, Some(PASSWORD.into())).await;
+    let result = SshSession::connect(&host, Some(PASSWORD.into()), None).await;
     assert!(result.is_err());
+}
+
+// ---------------- host key verification ----------------
+
+#[tokio::test(flavor = "multi_thread")]
+async fn host_key_tofu_pin_and_reconnect() {
+    let server = TestServer::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    let manager = Manager::new(dir.path().to_path_buf()).unwrap();
+
+    let mut host = host_for(&server);
+    host.id = String::new();
+    let saved = manager.save_host(host).unwrap();
+    manager.set_secret(&saved.id, PASSWORD).unwrap();
+
+    // First contact: must prompt, not connect.
+    let ConnectOutcome::HostKeyPrompt { prompt } =
+        manager.connect_host(&saved.id, None).await.unwrap()
+    else {
+        panic!("first connection must prompt for the host key");
+    };
+    assert_eq!(prompt.known_fingerprint, None);
+    assert!(prompt.fingerprint.starts_with("SHA256:"), "{}", prompt.fingerprint);
+    assert!(manager.list_known_hosts().is_empty());
+
+    // Accepting the prompted fingerprint connects and pins the key.
+    let ConnectOutcome::Connected { session } = manager
+        .connect_host(&saved.id, Some(prompt.fingerprint.clone()))
+        .await
+        .unwrap()
+    else {
+        panic!("accepting the key must connect");
+    };
+    let pinned = manager.list_known_hosts();
+    assert_eq!(pinned.len(), 1);
+    assert_eq!(pinned[0].fingerprint, prompt.fingerprint);
+    assert_eq!(pinned[0].port, server.port);
+    manager.disconnect_session(&session.id).await.unwrap();
+
+    // Reconnect: pinned key matches, no prompt.
+    let ConnectOutcome::Connected { session } =
+        manager.connect_host(&saved.id, None).await.unwrap()
+    else {
+        panic!("pinned host must connect without prompting");
+    };
+    manager.disconnect_session(&session.id).await.unwrap();
+
+    // Forgetting the key brings the prompt back.
+    manager.forget_known_host("127.0.0.1", server.port).unwrap();
+    assert!(matches!(
+        manager.connect_host(&saved.id, None).await.unwrap(),
+        ConnectOutcome::HostKeyPrompt { .. }
+    ));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn host_key_mismatch_rejected() {
+    let server = TestServer::start().await;
+    let host = host_for(&server);
+
+    // Learn the server's real fingerprint from the unknown-key rejection.
+    let verifier = HostKeyVerifier::new(None, None);
+    let Err(CoreError::HostKeyUnknown { fingerprint, .. }) =
+        SshSession::connect(&host, Some(PASSWORD.into()), Some(verifier)).await
+    else {
+        panic!("unverified first contact must fail with HostKeyUnknown");
+    };
+
+    // A pinned key that doesn't match must abort before authentication.
+    let stale = KnownHostKey {
+        host: host.host.clone(),
+        port: host.port,
+        key_type: "ssh-ed25519".into(),
+        key_base64: "AAAA-stale".into(),
+        fingerprint: "SHA256:stale-pinned-fingerprint".into(),
+        added_at: 0,
+    };
+    let verifier = HostKeyVerifier::new(Some(stale.clone()), None);
+    let Err(CoreError::HostKeyMismatch {
+        fingerprint: presented,
+        expected,
+        ..
+    }) = SshSession::connect(&host, Some(PASSWORD.into()), Some(verifier)).await
+    else {
+        panic!("changed host key must fail with HostKeyMismatch");
+    };
+    assert_eq!(presented, fingerprint);
+    assert_eq!(expected, stale.fingerprint);
+
+    // Explicitly approving the new fingerprint lets the user replace the pin.
+    let verifier = HostKeyVerifier::new(Some(stale), Some(fingerprint));
+    let session = SshSession::connect(&host, Some(PASSWORD.into()), Some(verifier.clone()))
+        .await
+        .expect("approving the replacement key must connect");
+    assert!(verifier.accepted_new());
+    session.disconnect().await;
+}
+
+#[test]
+fn host_key_store_persists() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = KnownHostsStore::open(dir.path().to_path_buf()).unwrap();
+    store
+        .pin("example.com", 22, "ssh-ed25519", "AAAAtest", "SHA256:abc")
+        .unwrap();
+
+    let reopened = KnownHostsStore::open(dir.path().to_path_buf()).unwrap();
+    let key = reopened.get("example.com", 22).expect("pinned key persists");
+    assert_eq!(key.fingerprint, "SHA256:abc");
+    assert!(reopened.get("example.com", 2222).is_none());
+
+    // Re-pinning replaces, forgetting removes — both persisted.
+    reopened
+        .pin("example.com", 22, "ssh-ed25519", "AAAAnew", "SHA256:def")
+        .unwrap();
+    assert_eq!(reopened.list().len(), 1);
+    reopened.forget("example.com", 22).unwrap();
+    let after = KnownHostsStore::open(dir.path().to_path_buf()).unwrap();
+    assert!(after.get("example.com", 22).is_none());
 }
 
 // ---------------- terminals ----------------
@@ -143,7 +283,7 @@ async fn terminal_via_manager_events() {
     let saved = manager.save_host(host).unwrap();
     manager.set_secret(&saved.id, PASSWORD).unwrap();
 
-    let info = manager.connect_host(&saved.id).await.unwrap();
+    let info = manager_connect(&manager, &saved.id).await;
     let mut events = manager.subscribe();
     let term_id = manager.open_terminal(&info.id, 80, 24).await.unwrap();
 
@@ -325,7 +465,7 @@ async fn sftp_transfers_as_jobs_with_progress() {
     host.id = String::new();
     let saved = manager.save_host(host).unwrap();
     manager.set_secret(&saved.id, PASSWORD).unwrap();
-    let info = manager.connect_host(&saved.id).await.unwrap();
+    let info = manager_connect(&manager, &saved.id).await;
 
     let root = server.fs_root.path().to_string_lossy().into_owned();
     let payload = vec![0xabu8; 300 * 1024];

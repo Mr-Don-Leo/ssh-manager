@@ -1,10 +1,11 @@
 # SSH Server Manager
 
-A Linux desktop app (Tauri 2 + React) for managing SSH servers.
+A desktop app (Tauri 2 + React) for managing SSH servers, for Linux, macOS, and Windows.
 
 ## Features
 
 - **Hosts** — store servers with per-host auth (SSH agent, private key, or password). Passwords and key passphrases live in an encrypted vault (XChaCha20-Poly1305, Argon2-derived key, 0600 key file).
+- **Host key verification** — the server's key must be confirmed by fingerprint on first connection, then it's pinned (known-hosts). If a server's key later changes, the connection is refused with a warning until you explicitly approve the new key. Pinned keys are managed in Settings.
 - **Terminal** — tabbed xterm.js terminals over SSH PTY channels.
 - **Files** — SFTP browser: navigate, upload/download with progress, rename, delete (recursive), new folders.
 - **Port Forwarding** — local (-L), remote (-R), and dynamic SOCKS5 (-D) tunnels.
@@ -16,15 +17,16 @@ The SSH stack is pure Rust ([russh](https://crates.io/crates/russh) + russh-sftp
 
 ## Development
 
-Requires Rust, Node 18+, and WebKitGTK 4.1 dev packages
-(`webkit2gtk4.1-devel gtk3-devel libsoup3-devel` on Fedora).
+Requires Rust and Node 18+. On Linux you also need the WebKitGTK 4.1 dev packages
+(`webkit2gtk4.1-devel gtk3-devel libsoup3-devel` on Fedora); macOS and Windows use
+the system webview.
 
 ```sh
 npm install
 npm run tauri dev     # run the app
 npm test              # frontend tests (vitest)
 cargo test -p ssh-core  # backend tests (in-process SSH server, no sshd needed)
-npm run tauri build   # produce deb/rpm/AppImage
+npm run tauri build   # deb/rpm/AppImage on Linux, dmg/app on macOS, msi/nsis on Windows
 ```
 
 Building the binary directly with cargo? Debug builds load the Vite dev server
@@ -38,6 +40,7 @@ Building the binary directly with cargo? Debug builds load the Vite dev server
 and exercises the real client stack end to end:
 
 - **networking** — connect, auth success/failure, exec, unreachable hosts
+- **host keys** — trust-on-first-use prompt + pinning, changed-key rejection, known-hosts persistence
 - **terminals** — PTY echo round-trips, resize, exit events (direct + via the manager event bus)
 - **credentials** — vault round-trip, encryption at rest, wrong-key fails closed, key-file permissions, host store CRUD
 - **SFTP** — browse/mkdir/rename/recursive delete, upload/download as jobs with progress

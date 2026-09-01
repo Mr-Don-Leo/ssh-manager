@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useApp } from "../state/store";
-import type { AuthMethod, HostEntry } from "../lib/types";
+import type { AuthMethod, HostEntry, HostKeyPrompt, SessionInfo } from "../lib/types";
 import * as ipc from "../lib/ipc";
 import { Checkbox, Dropdown, Field, Modal } from "../ui/primitives";
 import { PlugIcon, ServerIcon, TerminalIcon } from "../ui/icons";
@@ -198,6 +198,12 @@ export default function HostsView() {
   const [query, setQuery] = useState("");
   const [connecting, setConnecting] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<HostEntry | null>(null);
+  const [keyPrompt, setKeyPrompt] = useState<{
+    host: HostEntry;
+    prompt: HostKeyPrompt;
+    openShellAfter: boolean;
+  } | null>(null);
+  const [trusting, setTrusting] = useState(false);
 
   const filtered = useMemo(() => {
     const q = query.toLowerCase();
@@ -212,12 +218,35 @@ export default function HostsView() {
 
   const sessionFor = (hostId: string) => sessions.find((s) => s.hostId === hostId);
 
+  /** Connects, or surfaces the host-key trust prompt and returns null. */
+  const establish = async (
+    h: HostEntry,
+    openShellAfter: boolean,
+    acceptFingerprint?: string,
+  ): Promise<SessionInfo | null> => {
+    const outcome = await ipc.connectHost(h.id, acceptFingerprint);
+    if (outcome.status === "hostKeyPrompt") {
+      setKeyPrompt({ host: h, prompt: outcome.prompt, openShellAfter });
+      return null;
+    }
+    await refreshSessions();
+    return outcome.session;
+  };
+
+  const openTerminalFor = async (h: HostEntry, session: SessionInfo) => {
+    try {
+      const termId = await ipc.openTerminal(session.id, 80, 24);
+      addTermTab({ termId, sessionId: session.id, title: h.name });
+    } catch (e) {
+      toast(`Terminal failed: ${e}`, "error");
+    }
+  };
+
   const connect = async (h: HostEntry) => {
     setConnecting(h.id);
     try {
-      await ipc.connectHost(h.id);
-      await refreshSessions();
-      toast(`Connected to ${h.name}`);
+      const session = await establish(h, false);
+      if (session) toast(`Connected to ${h.name}`);
     } catch (e) {
       toast(`Connection failed: ${e}`, "error");
     } finally {
@@ -230,20 +259,35 @@ export default function HostsView() {
     if (!session) {
       setConnecting(h.id);
       try {
-        session = await ipc.connectHost(h.id);
-        await refreshSessions();
+        session = (await establish(h, true)) ?? undefined;
       } catch (e) {
         toast(`Connection failed: ${e}`, "error");
+      } finally {
         setConnecting(null);
-        return;
       }
-      setConnecting(null);
+      if (!session) return; // trust prompt shown, or connect failed
     }
+    await openTerminalFor(h, session);
+  };
+
+  const trustHostKey = async () => {
+    if (!keyPrompt) return;
+    const { host, prompt, openShellAfter } = keyPrompt;
+    setTrusting(true);
     try {
-      const termId = await ipc.openTerminal(session.id, 80, 24);
-      addTermTab({ termId, sessionId: session.id, title: h.name });
+      const session = await establish(host, openShellAfter, prompt.fingerprint);
+      if (session) {
+        setKeyPrompt(null);
+        toast(`Connected to ${host.name}`);
+        if (openShellAfter) await openTerminalFor(host, session);
+      }
+      // else: the server presented yet another key — establish() already
+      // replaced the prompt with the new fingerprint.
     } catch (e) {
-      toast(`Terminal failed: ${e}`, "error");
+      setKeyPrompt(null);
+      toast(`Connection failed: ${e}`, "error");
+    } finally {
+      setTrusting(false);
     }
   };
 
@@ -379,6 +423,76 @@ export default function HostsView() {
       </div>
 
       {editing && <HostEditor initial={editing} onDone={() => setEditing(null)} />}
+      {keyPrompt && (
+        <Modal
+          title={keyPrompt.prompt.knownFingerprint ? "Host Key Changed" : "Verify Host Key"}
+          onClose={() => setKeyPrompt(null)}
+          footer={
+            <>
+              <button className="btn btn-ghost" onClick={() => setKeyPrompt(null)}>
+                Cancel
+              </button>
+              <button
+                className="btn"
+                style={
+                  keyPrompt.prompt.knownFingerprint
+                    ? { background: "var(--danger)", color: "#fff" }
+                    : undefined
+                }
+                disabled={trusting}
+                onClick={trustHostKey}
+              >
+                {trusting
+                  ? "Connecting…"
+                  : keyPrompt.prompt.knownFingerprint
+                    ? "Replace Key & Connect"
+                    : "Trust & Connect"}
+              </button>
+            </>
+          }
+        >
+          {keyPrompt.prompt.knownFingerprint ? (
+            <p style={{ fontSize: 13.5, color: "var(--danger)", fontWeight: 600 }}>
+              The key presented by {keyPrompt.prompt.host}:{keyPrompt.prompt.port} does not
+              match the one pinned for this server. This can mean the server was reinstalled —
+              or that the connection is being intercepted.
+            </p>
+          ) : (
+            <p style={{ fontSize: 13.5 }}>
+              First connection to{" "}
+              <strong>
+                {keyPrompt.prompt.host}:{keyPrompt.prompt.port}
+              </strong>
+              . Verify the key fingerprint against the one shown on the server (
+              <span className="mono">ssh-keygen -lf /etc/ssh/ssh_host_*_key.pub</span>) before
+              trusting it.
+            </p>
+          )}
+          <div
+            className="mono selectable"
+            style={{
+              marginTop: 10,
+              padding: "10px 12px",
+              background: "var(--bg-input)",
+              border: "1px solid var(--border)",
+              borderRadius: "var(--radius-sm)",
+              fontSize: 12.5,
+              wordBreak: "break-all",
+            }}
+          >
+            {keyPrompt.prompt.keyType} {keyPrompt.prompt.fingerprint}
+          </div>
+          {keyPrompt.prompt.knownFingerprint && (
+            <div
+              style={{ marginTop: 8, fontSize: 12, color: "var(--text-secondary)" }}
+              className="selectable"
+            >
+              Previously pinned:{" "}
+              <span className="mono">{keyPrompt.prompt.knownFingerprint}</span>
+            </div>
+          )}
+        </Modal>
+      )}
       {confirmDelete && (
         <Modal
           title="Delete Host"
