@@ -2,6 +2,8 @@
 
 A desktop app (Tauri 2 + React) for managing SSH servers, for Linux, macOS, and Windows.
 
+**Website:** https://mr-don-leo.github.io/ssh-server-manager/
+
 ## Features
 
 - **Hosts** — store servers with per-host auth (SSH agent, private key, or password). Passwords and key passphrases live in an encrypted vault (XChaCha20-Poly1305, Argon2-derived key, 0600 key file).
@@ -52,5 +54,3 @@ and exercises the real client stack end to end:
 
 - [Mr-Don-Leo](https://github.com/Mr-Don-Leo) — maintainer
 - [SteveWithDiscord](https://github.com/SteveWithDiscord)
-
-Built with [Claude Code](https://claude.com/claude-code).
