@@ -43,6 +43,28 @@ pub struct SessionInfo {
     pub connected_at: u64,
 }
 
+/// What the UI must show before a connection can proceed: the key the server
+/// presented, and — if it conflicts with a pinned key — the old fingerprint.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostKeyPrompt {
+    pub host_id: String,
+    pub host: String,
+    pub port: u16,
+    pub key_type: String,
+    pub fingerprint: String,
+    /// `Some` means the server's key differs from the pinned one (danger);
+    /// `None` means the host is simply not known yet (first connection).
+    pub known_fingerprint: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "status")]
+pub enum ConnectOutcome {
+    Connected { session: SessionInfo },
+    HostKeyPrompt { prompt: HostKeyPrompt },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileEntry {
