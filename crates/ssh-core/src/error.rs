@@ -22,6 +22,21 @@ pub enum CoreError {
     JobNotFound(String),
     #[error("authentication failed: {0}")]
     AuthFailed(String),
+    #[error("unknown host key for {host} ({key_type} {fingerprint})")]
+    HostKeyUnknown {
+        host: String,
+        key_type: String,
+        fingerprint: String,
+    },
+    #[error(
+        "host key for {host} has changed! expected {expected}, server presented {key_type} {fingerprint}"
+    )]
+    HostKeyMismatch {
+        host: String,
+        key_type: String,
+        fingerprint: String,
+        expected: String,
+    },
     #[error("credential vault error: {0}")]
     Vault(String),
     #[error("no stored credential for host")]

@@ -2,12 +2,14 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AppSettings,
+  ConnectOutcome,
   FileEntry,
   ForwardInfo,
   ForwardSpec,
   HealthReport,
   HostEntry,
   JobInfo,
+  KnownHostKey,
   SessionInfo,
 } from "./types";
 
@@ -23,7 +25,11 @@ export const hasSecret = (hostId: string) => invoke<boolean>("has_secret", { hos
 export const deleteSecret = (hostId: string) => invoke<void>("delete_secret", { hostId });
 
 // Sessions
-export const connectHost = (hostId: string) => invoke<SessionInfo>("connect_host", { hostId });
+export const connectHost = (hostId: string, acceptFingerprint?: string) =>
+  invoke<ConnectOutcome>("connect_host", { hostId, acceptFingerprint: acceptFingerprint ?? null });
+export const listKnownHosts = () => invoke<KnownHostKey[]>("list_known_hosts");
+export const forgetKnownHost = (host: string, port: number) =>
+  invoke<void>("forget_known_host", { host, port });
 export const disconnectSession = (sessionId: string) =>
   invoke<void>("disconnect_session", { sessionId });
 export const listSessions = () => invoke<SessionInfo[]>("list_sessions");

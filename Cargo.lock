@@ -57,7 +57,7 @@ dependencies = [
 
 [[package]]
 name = "agentmux-ssh"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "serde",
@@ -4547,7 +4547,7 @@ dependencies = [
 
 [[package]]
 name = "ssh-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "argon2 0.5.3",
  "base64 0.22.1",
