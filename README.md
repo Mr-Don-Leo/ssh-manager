@@ -47,3 +47,10 @@ and exercises the real client stack end to end:
 - **forwarding** — local, remote, and SOCKS5 tunnels end to end
 - **health** — probe parsing, metrics over a live session, unreachable hosts
 - **jobs** — lifecycle, progress, failure, cancellation
+
+## Contributors
+
+- [Mr-Don-Leo](https://github.com/Mr-Don-Leo) — maintainer
+- [SteveWithDiscord](https://github.com/SteveWithDiscord)
+
+Built with [Claude Code](https://claude.com/claude-code).
